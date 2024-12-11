@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend-container
+          image: registry.digitalocean.com/gameshop/gameshop-frontend:v6
+          ports:
+            - containerPort: 3000
+#          resources:
+#            requests:
+#              memory: "256Mi"
+#              cpu: "500m"
+#            limits:
+#              memory: "512Mi"
+#              cpu: "1000m"
+      hostNetwork: false
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+spec:
+  selector:
+    app: frontend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: ClusterIP  # Change to NodePort or LoadBalancer as needed

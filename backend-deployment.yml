@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-deployment
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: sa-migration
+      initContainers:
+        - name: migrations-wait
+          image: ghcr.io/groundnuty/k8s-wait-for:v2.0
+          args:
+            - "job"
+            - "db-migrate"
+      containers:
+        - name: backend-container
+          image: registry.digitalocean.com/gameshop/gameshop-backend:v7
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: shared-logs
+              mountPath: ./app/logs
+            - name: backend-secrets
+              mountPath: ./app/secrets.yml
+              subPath: secrets.yml
+            - name: backend-config
+              mountPath: ./app/config.yml
+              subPath: config.yml
+
+        - name: filebeat
+          image: docker.elastic.co/beats/filebeat:8.10.2
+          volumeMounts:
+            - name: shared-logs
+              mountPath: /usr/share/filebeat/logs
+            - name: filebeat-config
+              mountPath: /usr/share/filebeat/filebeat.yml
+              subPath: filebeat.yml
+
+      volumes:
+        - name: shared-logs
+          emptyDir: { }
+        - name: filebeat-config
+          configMap:
+            name: filebeat-config
+        - name: backend-config
+          configMap:
+            name: backend-config
+        - name: backend-secrets
+          secret:
+            secretName: backend-secrets
+
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+spec:
+  selector:
+    app: backend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP  # Change to NodePort or LoadBalancer as needed
+
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-migration
+  namespace: default
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: migration-reader
+rules:
+  - apiGroups: ["batch","extensions"]
+    resources: ["jobs"]
+    verbs: ["get","watch","list"]
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: migration-reader
+subjects:
+- kind: ServiceAccount
+  name: sa-migration
+roleRef:
+  kind: Role
+  name: migration-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+spec:
+  ttlSecondsAfterFinished: 10  # Deletes the Job 10 seconds after it completes
+  activeDeadlineSeconds: 100
+  template:
+    spec:
+      containers:
+      - name: migrate
+        image: "registry.digitalocean.com/gameshop/gameshop-db-migrations:v5"
+        volumeMounts:
+          - name: backend-secrets
+            mountPath: ./app/secrets.yml
+            subPath: secrets.yml
+          - name: backend-config
+            mountPath: ./app/config.yml
+            subPath: config.yml
+      restartPolicy: Never
+
+      volumes:
+        - name: backend-config
+          configMap:
+            name: backend-config
+        - name: backend-secrets
+          secret:
+            secretName: backend-secrets
